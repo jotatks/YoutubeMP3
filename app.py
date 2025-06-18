@@ -1,63 +1,49 @@
-from flask import Flask, render_template, request, send_from_directory, jsonify
+from flask import Flask, render_template, request, send_from_directory
 import os
-import yt_dlp
+from yt_dlp import YoutubeDL
+from uuid import uuid4
 
 app = Flask(__name__)
-
-DOWNLOAD_FOLDER = 'downloads'
-if not os.path.exists(DOWNLOAD_FOLDER):
-    os.makedirs(DOWNLOAD_FOLDER)
+DOWNLOAD_FOLDER = os.path.join(os.getcwd(), 'download')
+os.makedirs(DOWNLOAD_FOLDER, exist_ok=True)
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
-        url = request.form.get('url')
+        url = request.form['url']
         if not url:
-            return jsonify({'success': False, 'error': 'URL não fornecida'})
+            return render_template('index.html', error="URL vazia.")
+
+        output_id = str(uuid4())  # cria nome único para evitar conflito
+        output_path = os.path.join(DOWNLOAD_FOLDER, f"{output_id}.mp3")
 
         ydl_opts = {
             'format': 'bestaudio/best',
-            'outtmpl': os.path.join(DOWNLOAD_FOLDER, '%(title)s.%(ext)s'),
+            'outtmpl': output_path,
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }],
-            'quiet': True,
-            'ignoreerrors': True,
+            'noplaylist': False,  # suporta playlists!
         }
 
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-
-            files = []
-            if 'entries' in info:  # playlist
-                for entry in info['entries']:
-                    if entry is None:
-                        continue
-                    title = entry.get('title')
-                    filename = f"{title}.mp3"
-                    files.append(filename)
-            else:
-                title = info.get('title')
-                filename = f"{title}.mp3"
-                files.append(filename)
-
-            file_urls = [f"/download/{file}" for file in files]
-
-            return jsonify({'success': True, 'files': file_urls, 'filenames': files})
-
+            with YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
         except Exception as e:
-            return jsonify({'success': False, 'error': str(e)})
+            return render_template('index.html', error=str(e))
+
+        filename = os.path.basename(output_path)
+        return render_template('index.html', success=True, filename=filename)
 
     return render_template('index.html')
-
 
 @app.route('/download/<filename>')
 def download(filename):
     return send_from_directory(DOWNLOAD_FOLDER, filename, as_attachment=True)
 
-
 if __name__ == '__main__':
-    app.run(debug=True)
+    import os
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
